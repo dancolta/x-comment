@@ -416,3 +416,7 @@ Not welcome:
 - Multi-account support
 
 These exist on purpose.
+
+---
+
+> Built by [NodeSparks](https://www.nodesparks.com) — [custom automation that replaces recurring SaaS](https://www.nodesparks.com/services/ai-automation-agency), operator-built and human-in-the-loop.
