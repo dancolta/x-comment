@@ -60,7 +60,7 @@ Parse the first word of the user's input as the subcommand, then run the matchin
 
 | Subcommand | What it does | Command |
 |---|---|---|
-| `fetch [N]` (default) | Fetch candidates + score + draft + store in SQLite + mirror to Notion. Optional count: `fetch 30` drafts up to 30 (default 15). | `… fetch [N]` |
+| `fetch [N]` (default) | Fetch candidates + score + draft + store in SQLite. Optional count: `fetch 30` drafts up to 30 (default 15). | `… fetch [N]` |
 | `review` | Show pending drafts inline in chat for the user to act on. | `… review` |
 | `approve <ids\|all>` | Mark drafts approved (e.g. `approve 1, 3, 5` or `approve all`). | `… approve <ids>` |
 | `redraft <id>: <feedback>` | Re-run drafter for one row with the user's steer (e.g. `redraft 2: shorter, drop the question`). | `… redraft <id> "<feedback>"` |
@@ -68,7 +68,7 @@ Parse the first word of the user's input as the subcommand, then run the matchin
 | `good <id>` | Promote a draft to `good-drafts.md` as a vibe reference. Consider also adding to `voice-corpus.md` if it demonstrates a new pattern. | `… good <id>` |
 | `publish` | Ship every draft with status=approved via Playwright. | `… publish` |
 | `status` | **Unified snapshot** — queue counts, today's published, scan-bg state + pool size, autopilot state + target/stop_at, paused/halt flags. Replaces the old `bg-status` and `autopilot status` (those still work as aliases). | `… status` |
-| `setup` | First-time install: verify xurl auth, Notion, claude CLI, log into X via Playwright. | `… setup` |
+| `setup` | First-time install: verify xurl auth, claude CLI, log into X via Playwright. | `… setup` |
 | `verify` | Skill health check: line counts, lint pattern totals, stale file detection, SKILL.md staleness vs code. Exit 1 if warnings. | `… verify` |
 | `autopilot start [target=N] [until=HH:MM]` | Install + load `com.x-engage.autopilot` launchd plist. Daemon ticks every 60s: scan → draft 1 → lint+score → auto-approve → publish via Playwright. **Bypasses manual approval.** **Auto-starts scan-bg** if not running. Stops on target hit, time reached, or safety signal. Defaults: target=50, until=18:00. | `… autopilot start [target=N] [until=HH:MM]` |
 | `autopilot stop` | Unload autopilot plist + kill `caffeinate` if active. Pool + queue stay. scan-bg keeps running unless you also `stop-bg`. | `… autopilot stop` |
@@ -94,12 +94,11 @@ After listing, prompt:
 Reply with: approve <ids|all>, redraft <id>: <feedback>, kill <id>, good <id>, or publish
 ```
 
-**Always end the review response with the Notion DB link** (parsed from `NOTION_DB_ID` in `.env`). The CLI prints it automatically — preserve it.
 
 ## After completion
 
-- `fetch`: pulled / drafted / skipped counts. Mention Notion DB URL if mirror is enabled.
-- `review`: show drafts as above; do not summarize. Always include the Notion DB link.
+- `fetch`: pulled / drafted / skipped counts.
+- `review`: show drafts as above; do not summarize.
 - `approve / redraft / kill / good`: confirm action in 1 line ("Approved #1, #3", "Redrafting #2…", "Killed #4", "Saved #5 as vibe reference")
 - `publish`: published / failed / deferred counts. Surface any safety signals.
 - `status`: phase, today's published count, paused state, queue counts.

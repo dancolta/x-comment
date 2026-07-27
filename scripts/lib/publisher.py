@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import config, log, state, notion_mirror
+from . import config, log, state
 
 SAFETY_KEYWORDS = (
     "your account is temporarily restricted",
@@ -451,11 +451,6 @@ def _publish_one(page, row: dict[str, Any]) -> tuple[bool, str]:
             published_at=published_at,
             published_url=url,  # parent URL; the reply itself isn't easily extractable from the DOM
         )
-        if row.get("notion_page_id"):
-            notion_mirror.update_status(row["notion_page_id"], "published", published_url=url)
-            # Archive the Notion page once shipped — keeps the active queue view clean.
-            # Same pattern as /linkedin-comment.
-            notion_mirror.archive_page(row["notion_page_id"])
         log.info("published", id=row["id"], parent=url)
         return True, ""
     except Exception as e:

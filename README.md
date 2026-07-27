@@ -124,7 +124,7 @@ No paid API needed. Cookies are read locally and never leave your machine.
 /x-engage setup
 ```
 
-The interactive wizard will walk you through the rest — Playwright login, voice profile customization, optional Notion mirror, and a verification check.
+The interactive wizard will walk you through the rest — Playwright login, voice profile customization, and a verification check.
 
 ![setup wizard demo](assets/setup-wizard.gif)
 
@@ -297,7 +297,6 @@ Most-touched settings:
 | `min_age_minutes` / `max_age_minutes` | 5 / 90 | Reply window |
 | `posting_windows` | Tue–Thu 8–11am + 3pm | Off-peak posts get less reach |
 | `banned_terms` | `[]` | Auto-reject any draft containing these (competitor names, etc.) |
-| `notion.mirror_enabled` | `false` | Optional Notion log of drafts |
 
 ### Voice profile
 
@@ -350,8 +349,8 @@ The launchd background daemon is macOS-only. The core CLI works on Linux if you 
 **What if my X cookies expire?**
 Re-grab them. Open x.com in Chrome → DevTools → Application → Cookies → x.com → copy `auth_token` and `ct0` into `.env`. If `/x-engage fetch` halts with a 401/403, delete `~/.x-engage/PAUSED` after updating cookies and re-run.
 
-**Can I use this without Notion?**
-Yes. Notion is optional and off by default. Set `notion.mirror_enabled: false` in `config/settings.yml` (or leave it unset). Approval happens entirely in chat — Notion is just a searchable log if you want one.
+**Where do I review drafts?**
+Entirely in chat. Run `/x-engage review` to see the pending queue, then `approve` / `redraft` / `kill` from there. All state lives in local SQLite — no external DB.
 
 **How do I customize the voice?**
 Edit `voice-profile.personal.md`. It's a plain markdown file describing how you write — sentence shape, register, words you do and don't use, examples of replies you'd actually send. The drafter reads it on every run. For X-specific shape rules (length floors, banned openers), edit `references/x-overlay.md` separately so voice and platform constraints stay decoupled.
@@ -383,7 +382,6 @@ scripts/
     ├── voice.py            # Claude CLI drafter + heuristic scorer
     ├── safety.py           # Deterministic lint (banned shapes)
     ├── state.py            # SQLite: drafts, cooldowns, seen, openers
-    ├── notion_mirror.py    # Optional Notion log
     ├── publisher.py        # Playwright publish + safety scan
     └── vendor/             # Shared discovery pipeline (vendored)
 config/

@@ -10,8 +10,6 @@ Every config key x-engage reads, grouped by file. Most users only need to touch 
 |---|---|---|
 | `AUTH_TOKEN` | Yes | X session cookie. ~40 chars. Setup wizard helps you grab it. |
 | `CT0` | Yes | X session cookie. ~160 chars. Setup wizard helps you grab it. |
-| `NOTION_TOKEN` | No | Notion integration token. Skip to disable the Notion mirror entirely. |
-| `NOTION_DB_ID` | No | 32-char hex from your Notion DB URL. |
 | `CLAUDE_CLI` | No | Defaults to `claude`. Override if your binary is elsewhere. |
 | `X_ENGAGE_HALT` | No | Set to `1` to halt all pipeline stages. Kill switch. |
 | `X_PROFILE_DIR` | No | Playwright Chrome profile dir. Defaults to `~/.x-engage/chrome-profile`. |
@@ -66,13 +64,6 @@ Every config key x-engage reads, grouped by file. Most users only need to touch 
 | `planner.enabled` | `false` | LLM-driven semantic expansion of topic queries. Off by default — your manual queries are usually tighter. |
 | `planner.model` | `claude-sonnet-4-6` | Model used by planner when enabled. |
 | `planner.depth` | `default` | `quick` / `default` / `deep`. More = more subqueries. |
-
-### Notion
-
-| Key | Default | Notes |
-|---|---|---|
-| `notion.mirror_enabled` | `true` | Set false to skip Notion writes (SQLite still works). |
-| `notion.status_field` | `Status` | Column name in your Notion DB. |
 
 ### Logging
 
@@ -218,7 +209,7 @@ These live in `scripts/lib/config.py` as the `PANIC` dict:
 
 | Path | Tracked in git | Purpose |
 |---|---|---|
-| `.env` | No | Secrets (cookies, Notion token) |
+| `.env` | No | Secrets (X session cookies) |
 | `.env.example` | Yes | Template |
 | `config/*.yml` | No | Your live config |
 | `config/*.example.yml` | Yes | Starter templates |

@@ -95,11 +95,6 @@ banned_terms: []
   # - oldjob                         # ex-employer
   # - sideprojectname                # personal project you don't want surfaced
 
-# Notion mirror
-notion:
-  mirror_enabled: true         # set false to skip Notion writes (SQLite still works)
-  status_field: Status         # column name in your Notion DB
-
 # Logging
 log_level: INFO                # DEBUG | INFO | WARN | ERROR
 log_dir: ./logs

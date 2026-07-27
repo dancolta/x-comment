@@ -55,7 +55,6 @@ Every `publish` run loads `x.com/home` first and scans for restriction language 
 ## After publish
 
 - SQLite: draft row → `status=published`, `published_url` filled, `handles_cooldown` updated
-- Notion: mirror row → `status=published`, `published_at` filled
 - Log to `logs/publish-<date>.jsonl` (gitignored)
 
 ## Daily cap reset

@@ -124,7 +124,7 @@ Each new day, autopilot must be re-started manually. This is intentional — it 
 ## Config style
 
 - Personal voice files (`voice-profile.personal.md`, `voice-corpus.md`, `voice-receipts.md`, `good-drafts.md`) are gitignored; `.example` versions are checked in as templates.
-- `.env` holds X cookies + optional Notion token. Never commit. `.env.example` shows shape.
+- `.env` holds X session cookies. Never commit. `.env.example` shows shape.
 - All numeric thresholds live in `config/settings.yml`. Don't hardcode in Python.
 
 ## Code conventions

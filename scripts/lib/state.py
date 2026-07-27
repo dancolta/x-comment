@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS drafts (
     status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | published | failed
     feedback TEXT,
     redraft_count INTEGER NOT NULL DEFAULT 0,
-    notion_page_id TEXT,
     created_at INTEGER NOT NULL,
     approved_at INTEGER,
     published_url TEXT,
@@ -106,7 +105,7 @@ def get_draft(draft_id: str) -> dict[str, Any] | None:
 
 def set_draft_status(draft_id: str, status: str, **extras: Any) -> bool:
     """Set status and optional fields. Returns True if row existed."""
-    allowed = {"feedback", "notion_page_id", "approved_at", "published_url", "published_at",
+    allowed = {"feedback", "approved_at", "published_url", "published_at",
                "draft", "score", "redraft_count"}
     sets = ["status = ?"]
     vals: list[Any] = [status]

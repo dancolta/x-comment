@@ -19,8 +19,8 @@ Eviction: rows older than MAX_POOL_AGE_SEC are pruned on every write.
 That keeps the pool small and ensures we never draft for a post that
 has aged out of the X reply window.
 
-Notion is NOT touched here. Pool is internal-only; only drafts (rows
-in `drafts` table) ever sync to Notion.
+Pool is internal-only; it holds raw candidates, never drafts. Only the
+`drafts` table (reviewed in chat) is user-facing.
 """
 
 from __future__ import annotations

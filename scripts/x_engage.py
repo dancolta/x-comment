@@ -12,7 +12,7 @@ from pathlib import Path
 # Make `from scripts.lib...` work when invoked as `python -m scripts.x_engage`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.lib import candidate_pool, config, log, state, voice, safety, notion_mirror
+from scripts.lib import candidate_pool, config, log, state, voice, safety
 from scripts.lib.fetch import fetch_candidates, CookiesExpired
 
 
@@ -257,10 +257,6 @@ def cmd_fetch(args: list[str] | None = None) -> int:
             draft=draft,
             score=score,
         )
-        # Mirror to Notion (log only, never approval)
-        page_id = notion_mirror.push_draft(state.get_draft(draft_id) or {})
-        if page_id:
-            state.set_draft_status(draft_id, "pending", notion_page_id=page_id)
         state.record_opener(safety.extract_opener(draft))
         recent_openers = state.recent_openers(limit=5)
         # Prepend the fresh draft so the NEXT iteration's starvation quota
@@ -275,9 +271,6 @@ def cmd_fetch(args: list[str] | None = None) -> int:
         candidate_pool.mark_drafted(drafted_pool_ids)
 
     print(f"fetch: drafted={drafted}, skipped={skipped}, rejected={rejected}, candidates={len(candidates)}")
-    db_id = config.env("NOTION_DB_ID")
-    if db_id:
-        print(f"Notion DB: https://www.notion.so/{db_id.replace('-', '')} (log only — approve in chat)")
     return 0
 
 
@@ -296,10 +289,6 @@ def cmd_review() -> int:
         print(f"  Source: \"{src}\"")
         print(f"  Draft:  \"{row['draft']}\"\n")
     print("Reply with: approve <ids|all>, redraft <id>: <feedback>, kill <id>, good <id>, or publish")
-    # Surface the Notion log link so the user can cross-reference in their DB
-    db_id = config.env("NOTION_DB_ID") or ""
-    if db_id and (config.settings().get("notion") or {}).get("mirror_enabled", True):
-        print(f"\nNotion DB: https://www.notion.so/{db_id.replace('-', '')}")
     return 0
 
 
@@ -320,9 +309,6 @@ def cmd_approve(args: list[str]) -> int:
     n = 0
     for tid in targets:
         if state.set_draft_status(tid, "approved", approved_at=state.now()):
-            row = state.get_draft(tid)
-            if row and row.get("notion_page_id"):
-                notion_mirror.update_status(row["notion_page_id"], "approved")
             n += 1
     print(f"approve: marked {n} draft(s) approved. Run `/x-engage publish` to ship.")
     return 0
@@ -368,9 +354,6 @@ def cmd_redraft(args: list[str]) -> int:
         draft=new_draft, score=score,
         feedback=feedback, redraft_count=row["redraft_count"] + 1,
     )
-    # Sync the new text back to Notion so the DB row matches SQLite.
-    if row.get("notion_page_id"):
-        notion_mirror.update_draft_text(row["notion_page_id"], new_draft)
     print(f"redraft #{tid}: score {score:.2f}")
     print(f'  Draft: "{new_draft}"')
     return 0
@@ -385,9 +368,6 @@ def cmd_kill(args: list[str]) -> int:
     tid = args[0].strip("#")
     ok = state.set_draft_status(tid, "rejected")
     if ok:
-        row = state.get_draft(tid)
-        if row and row.get("notion_page_id"):
-            notion_mirror.update_status(row["notion_page_id"], "rejected", reason="killed in chat")
         print(f"kill: rejected #{tid}")
     else:
         print(f"kill: no draft with id {tid}")
@@ -1131,14 +1111,10 @@ def cmd_autopilot_tick() -> int:
             draft=draft,
             score=score,
         )
-        page_id = notion_mirror.push_draft(state.get_draft(draft_id) or {})
         state.set_draft_status(
             draft_id, "approved",
             approved_at=state.now(),
-            notion_page_id=page_id,
         )
-        if page_id:
-            notion_mirror.update_status(page_id, "approved")
         state.record_opener(safety.extract_opener(draft))
 
         # publish_batch enforces its own entry safety scan + writes PAUSED on signal.
@@ -1311,7 +1287,7 @@ def _cmd_setup_wizard() -> int:
     print()
 
     # ─── Step 1: prereq tooling ───
-    print("Step 1/6 — Checking required tools on your system…")
+    print("Step 1/5 — Checking required tools on your system…")
     missing = []
     for tool, hint in [
         ("node", "Install Node.js 22+ from https://nodejs.org"),
@@ -1329,7 +1305,7 @@ def _cmd_setup_wizard() -> int:
     print()
 
     # ─── Step 2: copy example configs if missing ───
-    print("Step 2/6 — Setting up config files…")
+    print("Step 2/5 — Setting up config files…")
     root = Path(__file__).resolve().parents[1]
     for src, dst in [
         ("config/accounts.example.yml", "config/accounts.yml"),
@@ -1349,7 +1325,7 @@ def _cmd_setup_wizard() -> int:
     print()
 
     # ─── Step 3: X session cookies ───
-    print("Step 3/6 — X (Twitter) session cookies")
+    print("Step 3/5 — X (Twitter) session cookies")
     print("  These let x-engage read your X feed (no password, no API key).")
     print("  How to grab them:")
     print("    1. Open x.com in Chrome, logged in")
@@ -1378,29 +1354,8 @@ def _cmd_setup_wizard() -> int:
         print("  ✓ Saved to .env")
     print()
 
-    # ─── Step 4: Notion (optional) ───
-    print("Step 4/6 — Notion mirror (optional)")
-    print("  If you skip this, drafts only live in local SQLite + chat.")
-    print("  Notion gives you a searchable, shareable log.")
-    if _prompt_yes_no("  Set up Notion now?", default=False):
-        print("  How:")
-        print("    1. Visit https://www.notion.so/profile/integrations")
-        print("    2. Create a new integration, copy the secret (starts with `ntn_…`)")
-        print("    3. Create a Notion DB with these columns: Name (title), status (select),")
-        print("       author, draft, post_text, post_url, scanned_at (date), published_at (date)")
-        print("    4. Share the DB with your integration (DB top-right → Connections)")
-        print("    5. Copy the DB ID from the URL (the 32-char hex string)")
-        token = _prompt("  Paste Notion integration token", secret=True)
-        db_id = _prompt("  Paste Notion DB ID (32 hex chars)")
-        _write_env_value("NOTION_TOKEN", token)
-        _write_env_value("NOTION_DB_ID", db_id)
-        print("  ✓ Saved to .env")
-    else:
-        print("  → Skipped (mirror_enabled defaults to true; the code falls back gracefully)")
-    print()
-
-    # ─── Step 5: Playwright login ───
-    print("Step 5/6 — One-time X login in the publish browser profile")
+    # ─── Step 4: Playwright login ───
+    print("Step 4/5 — One-time X login in the publish browser profile")
     print("  Playwright will open Chrome, you log into X manually,")
     print("  then close the window. Login persists for future publishes.")
     if _prompt_yes_no("  Do this now?", default=True):
@@ -1432,8 +1387,8 @@ def _cmd_setup_wizard() -> int:
         print("  → Skipped (publish won't work until you do this — see README)")
     print()
 
-    # ─── Step 6: optional background daemon ───
-    print("Step 6/6 — Background daemon (optional but recommended)")
+    # ─── Step 5: optional background daemon ───
+    print("Step 5/5 — Background daemon (optional but recommended)")
     print("  Scans X every 10 min for candidates so `/x-engage fetch`")
     print("  is instant when you run it. Costs ~3 sec CPU per cycle.")
     if _prompt_yes_no("  Install + start the daemon now?", default=True):
@@ -1489,11 +1444,6 @@ def _cmd_setup_check() -> int:
             print("       Cookies may be expired. Log out + back in on x.com, re-grab "
                   "auth_token + ct0, update .env.")
             ok = False
-    if config.env("NOTION_TOKEN") and config.env("NOTION_DB_ID"):
-        print("[ok] Notion env vars present")
-    else:
-        print("[fail] NOTION_TOKEN and NOTION_DB_ID required in .env")
-        ok = False
     import shutil
     if shutil.which(config.env("CLAUDE_CLI", "claude")):
         print("[ok] claude CLI on PATH")
