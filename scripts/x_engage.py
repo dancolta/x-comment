@@ -1128,7 +1128,20 @@ def cmd_autopilot_tick() -> int:
         row = state.get_draft(draft_id)
         if not row:
             return 1
-        result = publish_batch([row], settings)
+        # The draft is already flagged `approved` above. Any failure past this
+        # point must walk it back to `pending`, or it strands in the approved
+        # queue: invisible to `review`, never retried, and silently inflating
+        # the approved count while nothing ships. 2026-08-05: a pruned
+        # Playwright browser build crashed publish_batch on every tick for six
+        # hours. launchd restarted each dead tick, the heartbeat stayed ALIVE,
+        # and 40 drafts piled up unnoticed.
+        try:
+            result = publish_batch([row], settings)
+        except Exception as e:
+            state.set_draft_status(draft_id, "pending")
+            log.warn("autopilot_publish_crashed", draft_id=draft_id, err=str(e))
+            print(f"autopilot-tick: publish crashed, draft={draft_id} returned to pending — {e}")
+            return 0
         if result.get("safety_signal"):
             log.warn("autopilot_halted_safety", signal=result["safety_signal"])
             print(f"autopilot-tick: ACCOUNT_PAUSED — {result['safety_signal']}")
@@ -1138,7 +1151,8 @@ def cmd_autopilot_tick() -> int:
             log.info("autopilot_tick_published", draft_id=draft_id, score=score, author=author)
             print(f"autopilot-tick: published draft={draft_id} score={score:.2f} @{author}")
             return 0
-        # publish failed (non-safety) — log and try next candidate next tick
+        # publish failed (non-safety) — return to pending and try next candidate next tick
+        state.set_draft_status(draft_id, "pending")
         log.warn("autopilot_publish_failed", draft_id=draft_id)
         return 0
 
