@@ -14,7 +14,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import config, log
+from . import config, log, safety
 
 ROOT = Path(__file__).resolve().parents[2]
 VOICE_PROFILE_PERSONAL = ROOT / "voice-profile.personal.md"
@@ -31,11 +31,45 @@ CORPUS_INJECT_K = 3
 # offer choice without overloading the prompt.
 RECEIPTS_INJECT_K = 2
 
-# Window for recent-published lookup. Kept for backward compatibility with
-# callers in scripts/x_engage.py — used to populate `recent_openers` for the
-# opener-uniqueness lint in safety.py. The old shape-starvation block that
-# also used this is gone.
-SHAPE_HISTORY_WINDOW = 5
+# Window for recent-published lookup. Sizes the `recent_drafts` list that
+# callers in scripts/x_engage.py pass to the filler cadence gate in safety.py.
+# Single source of truth is safety.FILLER_WINDOW. The old shape-starvation
+# block that used to read this is gone.
+SHAPE_HISTORY_WINDOW = safety.FILLER_WINDOW
+
+# --- Light-tone slot (1-in-5 human-touch beat) ---
+#
+# Every 5th eligible draft gets a single-line nudge at the bottom of the task
+# block that allows a dry, self-deprecating, or deadpan aside if it lands
+# naturally. "Eligible" = source post has humor, frustration, or relatable
+# builder-pain signals that make a light reply feel earned. Posts about
+# pricing, strategy debates, or purely technical claims skip the slot.
+_fun_draft_counter: int = 0
+_FUN_SLOT_EVERY: int = 5
+
+_FUN_ELIGIBLE_SIGNALS = (
+    "lol", "haha", "hah", "funny", "ironic", "irony", "classic", "wild",
+    "insane", "crazy", "pain", "broke", "broken", "crashed", "burned",
+    "debug", "debugging", "spent", "hours on", "wasted", "again", "still",
+    "omg", "wtf", "facepalm", "weekend", "3am", "all night", "give up",
+    "giving up", "tried everything", "no idea", "same mistake", "rookie",
+    "oops", "turns out", "plot twist", "accidentally", "my bad",
+)
+
+_FUN_TASK_NUDGE = (
+    "On this draft: if a dry, self-deprecating aside or deadpan observation "
+    "lands naturally given the source post (e.g. the recursive irony of building "
+    "a tool to fix a tool, a '1 cent for every time' hyperbole, a 'crazy time we "
+    "live' beat, a mock-frustrated aside), include it as one inline beat. One beat "
+    "only, never as a standalone punchline, never forced. If it doesn't fit the "
+    "source post, write it straight. The drafter decides."
+)
+
+
+def _is_fun_eligible(source_text: str) -> bool:
+    """Return True if the source post has signals that welcome a light moment."""
+    low = source_text.lower()
+    return any(sig in low for sig in _FUN_ELIGIBLE_SIGNALS)
 
 
 # --- Corpus loading ---
@@ -226,7 +260,8 @@ RETRIEVAL_KEYWORDS = {
 }
 
 
-def _retrieve_examples(source_text: str, k: int = CORPUS_INJECT_K) -> list[dict]:
+def _retrieve_examples(source_text: str, k: int = CORPUS_INJECT_K,
+                       *, allow_filler: bool = True) -> list[dict]:
     """Return up to k corpus entries matched to the source post.
 
     Strategy:
@@ -234,10 +269,20 @@ def _retrieve_examples(source_text: str, k: int = CORPUS_INJECT_K) -> list[dict]
       2. If at least 1 entry scores > 0, take top-k from those.
       3. If nothing matches, fall back to random k from the full corpus
          (the model needs SOMETHING to anchor on, even if it's not topic-matched).
+
+    `allow_filler=False` (the filler budget is spent — see safety.FILLER_WINDOW)
+    drops corpus entries containing tbh/kinda from the candidate set, so the
+    model isn't shown the pattern it can't use. Falls back to the full corpus
+    if filtering would leave fewer than k entries — topic match wins over
+    cadence, and the lint is the backstop.
     """
     corpus = _load_corpus()
     if not corpus:
         return []
+    if not allow_filler:
+        clean = [c for c in corpus if not safety.FILLER_RE.search(c["body"])]
+        if len(clean) >= k:
+            corpus = clean
     if len(corpus) <= k:
         return corpus
 
@@ -296,7 +341,7 @@ Text:
 # Your task
 
 Write ONE X reply in the voice defined by the profile above. Apply the six positive specs and imitate the corpus texture. Output ONLY the reply text on a single line. No quotes, no preamble, no markdown. If you cannot produce a voice-matched reply that says something specific, output the literal word SKIP.
-"""
+{fun_nudge_block}"""
 
 
 def _format_receipts_block(receipts: list[dict]) -> str:
@@ -334,13 +379,16 @@ def draft_reply(*, source_text: str, author: str, followers: int, age_min: int,
                 feedback: str | None = None) -> str:
     """Call Claude CLI to produce one reply. Returns raw output or SKIP.
 
-    `recent_drafts` is accepted for API compatibility but no longer steers the
-    prompt — the architecture research showed that "register starvation"
-    instructions cause register collision. Variety is enforced by lint only
-    (no 3 questions in a row, opener uniqueness).
+    `recent_drafts` never steers the prompt — the architecture research showed
+    that "register starvation" instructions cause register collision. It is
+    read for one thing only: if a recent reply already spent the tbh/kinda
+    budget, filler-bearing corpus examples are held back from retrieval so the
+    model isn't primed to repeat it. The lint gate in safety.py is the backstop.
 
     `feedback` is the user-side redraft steer when used from `redraft <id>`.
     """
+    global _fun_draft_counter
+
     if not VOICE_PROFILE_PERSONAL.exists():
         raise FileNotFoundError(
             f"Missing {VOICE_PROFILE_PERSONAL.name}. "
@@ -349,7 +397,10 @@ def draft_reply(*, source_text: str, author: str, followers: int, age_min: int,
         )
 
     voice = VOICE_PROFILE_PERSONAL.read_text()
-    examples = _retrieve_examples(source_text)
+    # Filler budget: spent if any recent reply in the window already used one.
+    window = (recent_drafts or [])[:safety.FILLER_WINDOW]
+    allow_filler = not any(safety.FILLER_RE.search(prev or "") for prev in window)
+    examples = _retrieve_examples(source_text, allow_filler=allow_filler)
     corpus_block = _format_corpus_block(examples)
     receipts = _retrieve_receipts(source_text)
     receipts_block = _format_receipts_block(receipts)
@@ -361,6 +412,20 @@ def draft_reply(*, source_text: str, author: str, followers: int, age_min: int,
             f"\"\"\"\n{feedback}\n\"\"\"\n"
         )
 
+    # --- 1-in-5 light-tone slot ---
+    # Increment counter on every draft call (not just eligible ones) so the
+    # slot fires at a predictable cadence across the full session, not just
+    # within eligible posts.
+    _fun_draft_counter += 1
+    is_fun_slot = (
+        (_fun_draft_counter % _FUN_SLOT_EVERY) == 0
+        and _is_fun_eligible(source_text)
+        and not feedback  # redraft steers override — user wants something specific
+    )
+    fun_nudge_block = f"\n{_FUN_TASK_NUDGE}" if is_fun_slot else ""
+    if is_fun_slot:
+        log.info("fun_slot_active", counter=_fun_draft_counter, author=author)
+
     prompt = PROMPT_TEMPLATE.format(
         voice_profile=voice,
         corpus_block=corpus_block,
@@ -370,6 +435,7 @@ def draft_reply(*, source_text: str, author: str, followers: int, age_min: int,
         age_min=age_min,
         source_text=source_text,
         feedback_block=feedback_block,
+        fun_nudge_block=fun_nudge_block,
     )
 
     cli = config.env("CLAUDE_CLI", "claude")

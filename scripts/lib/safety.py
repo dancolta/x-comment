@@ -75,6 +75,14 @@ BANNED_ANYWHERE = (
     "is where it ",
     "is where the ",
     "is where things ",
+    # "that's where i/we/you/the X" — closer variant of the same AI-cadence shape
+    # (flagged 2026-06-01 — original post "the design freeze at the end tho,
+    # that's where i always bleed time" was called out as AI by a peer)
+    "that's where i ",
+    "thats where i ",
+    "that's where we ",
+    "that's where you ",
+    "that's where the ",
     # Bare-fragment closer after a period — e.g. "...3 paying ones. different math entirely."
     # (flagged 2026-05-20, draft published before lint update.)
     # Shape the user wants: comma + connector like "that's" before the closer.
@@ -92,6 +100,21 @@ BANNED_ANYWHERE = (
     # entry on talking about a personal build without platform-promotion.
     "on github if you",
     "writeup on github", "write-up on github",
+    # Tool-leak — the drafter described x-engage itself in a reply
+    # (flagged 2026-05-29, draft 0f9f8441 to @anupamrjp:
+    # "working on a local X curation tool, scans my watchlist every 10min,
+    # drafts replies in my voice and queues for approval, no cloud...")
+    # Minimal substring matches that trace to this exact leak shape.
+    "drafts replies",
+    "draft replies",
+    "drafting replies",
+    "queues for approval",
+    "queue for approval",
+    "scans my watchlist",
+    "scan my watchlist",
+    "curation tool",
+    "replies in my voice",
+    "reply in my voice",
     # Add more here as the user flags. Format: lowercased substring match.
 )
 
@@ -131,6 +154,23 @@ APHORISM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Parallel-negation template "no X, no Y, just Z" — confirmed AI tell across
+# Dan's outputs (memory: feedback_no_parallel_negation_template.md).
+# Flagged 2026-06-01 from "two weeks no real code, just logic and ideas" tweet.
+PARALLEL_NEG_RE = re.compile(
+    r"\bno\s+\w+(?:\s+\w+)?,\s+(?:no\s+\w+(?:\s+\w+)?,\s+)?just\s+\w+",
+    re.IGNORECASE,
+)
+
+# Inline X-not-Y reframe ("feeding context not hunting for it") — AI parallel
+# construction. Catches verb-phrase comma-less "X not Y" where both sides are
+# short gerund/verb phrases. Conservative to avoid false positives on natural
+# negation ("i did not ship that").
+INLINE_NOT_REFRAME_RE = re.compile(
+    r"\b(\w+ing\s+\w+(?:\s+\w+)?)\s+not\s+(\w+ing\s+\w+(?:\s+\w+)?)",
+    re.IGNORECASE,
+)
+
 # Listicle-wisdom — kept only patterns confirmed as AI tells across both the
 # X playbook research and the competitor corpus. Pruned heavily — many old
 # patterns had too many false positives.
@@ -154,6 +194,31 @@ def _user_banned_terms() -> tuple[str, ...]:
         return ()
 
 
+# --- Filler cadence gate (flagged 2026-08-12) ---
+#
+# Dan: "it uses tbh and kinda too often, we need to make it once in every
+# 6-7 comments." Measured at flag time: 18 of the last 50 published drafts
+# carried one (1 in 2.8). Driver was corpus-side — 6 of 15 corpus entries
+# carry a filler, so retrieval showed the model one in ~40% of injected
+# examples.
+#
+# Shared budget across the whole filler class: a draft carrying any filler
+# is rejected unless the last FILLER_WINDOW published/approved drafts are
+# clean.
+#
+# Sizing: the gate only blocks, it never forces, so the realized spacing is
+# FILLER_WINDOW + 1/p where p is the drafter's natural filler rate (0.36 at
+# flag time). Window 4 → hard floor of 1 in 5, realized ~1 in 7. Raise this
+# by 1 if the rate still reads dense; that is the whole knob.
+#
+# This is a post-filter, not a prompt rule. The matching retrieval-side
+# suppression lives in voice.py (_retrieve_examples) so the model is rarely
+# shown a filler example when the budget is spent — that keeps this lint from
+# burning drafts. Do NOT add a "use tbh less" line to the prompt.
+FILLER_WINDOW = 4
+FILLER_RE = re.compile(r"\b(tbh|kinda)\b", re.IGNORECASE)
+
+
 URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 HASHTAG_RE = re.compile(r"(?:^|\s)#\w+")
 HANDLE_RE = re.compile(r"(?:^|\s)@\w+")
@@ -170,9 +235,10 @@ def lint_draft(draft: str, *, source_author: str, recent_openers: list[str],
                recent_drafts: list[str] | None = None) -> tuple[bool, str]:
     """Return (passes, reason). reason="" when passes=True.
 
-    `recent_drafts` is accepted for API compatibility but no longer used —
-    the 3-questions-in-a-row backstop was dropped. Variety enforced only by
-    opener uniqueness against recent_openers.
+    `recent_drafts` is the last N published/approved draft texts, newest
+    first. Used only by the filler cadence gate (see FILLER_WINDOW) — the
+    3-questions-in-a-row backstop was dropped. Shape variety is enforced only
+    by opener uniqueness against recent_openers.
     """
     text = draft.strip()
     if not text:
@@ -202,6 +268,12 @@ def lint_draft(draft: str, *, source_author: str, recent_openers: list[str],
     for phrase in BANNED_ANYWHERE:
         if phrase in low:
             return False, f"banned phrase: {phrase!r}"
+
+    # --- filler cadence: one tbh/kinda per FILLER_WINDOW+1 replies ---
+    if FILLER_RE.search(text):
+        window = (recent_drafts or [])[:FILLER_WINDOW]
+        if any(FILLER_RE.search(prev or "") for prev in window):
+            return False, f"filler cadence (tbh/kinda used within last {FILLER_WINDOW} replies)"
 
     # --- emoji / hashtag / link / exclamation / dashes / quotes ---
     if EMOJI_RE.search(text):
@@ -280,6 +352,14 @@ def lint_draft(draft: str, *, source_author: str, recent_openers: list[str],
             return False, f"aphorism-punchline: {pat!r}"
     if APHORISM_RE.search(text):
         return False, "aphorism-punchline shape"
+
+    # --- parallel-negation template ("no X, no Y, just Z") ---
+    if PARALLEL_NEG_RE.search(text):
+        return False, "parallel-negation template (no X, just Y)"
+
+    # --- inline X-not-Y verb-phrase reframe ("feeding context not hunting for it") ---
+    if INLINE_NOT_REFRAME_RE.search(text):
+        return False, "inline X-not-Y reframe"
 
     # --- tilde cap: 0 is target, 1 grudgingly allowed, 2+ rejected ---
     tilde_count = _count_tildes(text)

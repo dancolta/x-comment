@@ -172,10 +172,9 @@ def cmd_fetch(args: list[str] | None = None) -> int:
     rejected = 0
     drafted_pool_ids: list[str] = []
     recent_openers = state.recent_openers(limit=5)
-    # Recent published/approved draft texts → drafter uses them to compute the
-    # shape-starvation quota (questions/statements/personal-experience mix).
-    # Updated in-loop so back-to-back drafts in the same fetch see each other's
-    # shape and rotate, not just the pre-fetch baseline.
+    # Recent published/approved draft texts → feeds the filler cadence gate
+    # (safety.FILLER_WINDOW). Updated in-loop so back-to-back drafts in the same
+    # fetch see each other's filler use, not just the pre-fetch baseline.
     recent_drafts = state.recent_published_drafts(limit=voice.SHAPE_HISTORY_WINDOW)
 
     for item in candidates:
@@ -259,9 +258,9 @@ def cmd_fetch(args: list[str] | None = None) -> int:
         )
         state.record_opener(safety.extract_opener(draft))
         recent_openers = state.recent_openers(limit=5)
-        # Prepend the fresh draft so the NEXT iteration's starvation quota
-        # sees it. Keeps a rolling window of 5 across the whole fetch batch.
-        recent_drafts = ([draft] + recent_drafts)[:5]
+        # Prepend the fresh draft so the NEXT iteration's filler gate sees it.
+        # Keeps a rolling window across the whole fetch batch.
+        recent_drafts = ([draft] + recent_drafts)[:safety.FILLER_WINDOW]
         drafted += 1
 
     # Mark pool-sourced items as drafted so they're not re-picked next run.

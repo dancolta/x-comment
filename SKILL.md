@@ -17,7 +17,7 @@ Drafts are produced by **corpus retrieval + minimal positive-spec prompt + post-
 - `voice-profile.personal.md` (~80 lines) — six positive specs + confirmed your voice patterns
 - `voice-corpus.md` — tagged voice-matched reply examples, top-3 retrieved by source-post keyword
 - `voice-receipts.md` — static verifiable user facts (your GitHub stats, your company numbers), top-2 retrieved by keyword
-- `scripts/lib/safety.py` — deterministic post-filter lint (em-dash ban, aphorism patterns, AI-stock phrases)
+- `scripts/lib/safety.py` — deterministic post-filter lint (em-dash ban, aphorism patterns, AI-stock phrases, tbh/kinda cadence gate)
 - `scripts/lib/voice.py` — drafter orchestrator + Claude CLI invocation
 - `SKILL_DISCIPLINE.md` — anti-bloat guardrails (read this before adding rules)
 
