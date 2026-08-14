@@ -231,11 +231,36 @@ def _interlude(page, settings: dict[str, Any]) -> None:
 
 
 def _scan_for_safety(page) -> str:
-    """Return non-empty string if page contains a safety/captcha signal."""
+    """Return non-empty string if page contains a safety/captcha signal.
+
+    Scans X's own chrome only. Tweets render inside <article> and trends inside
+    the sidebar column; both carry arbitrary user text, so a raw body scan can
+    match SAFETY_KEYWORDS on an ordinary post — a thread about CAPTCHA solvers
+    reads identically to a real challenge page. Narrowed 2026-08-14 after draft
+    94dd5a0c halted autopilot on a "Top 15 AI Engineer projects" listicle
+    (browser-automation topic) 13 replies into a clean run.
+
+    Real signals survive this: login walls, restriction notices and challenges
+    replace the app shell, so they land outside <article> or on a page with no
+    articles at all.
+    """
     try:
-        body = (page.inner_text("body") or "").lower()
+        body = (page.evaluate(
+            """() => {
+                const root = document.body.cloneNode(true);
+                root.querySelectorAll('article, [data-testid="sidebarColumn"]')
+                    .forEach(n => n.remove());
+                return root.innerText || root.textContent || '';
+            }"""
+        ) or "").lower()
     except Exception:
-        return ""
+        # Fail closed: fall back to the old whole-body scan rather than
+        # returning clean. A broken evaluate must not silently disable the
+        # guard for the rest of the run.
+        try:
+            body = (page.inner_text("body") or "").lower()
+        except Exception:
+            return ""
     for kw in SAFETY_KEYWORDS:
         if kw in body:
             return kw
