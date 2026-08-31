@@ -639,7 +639,6 @@ AUTOPILOT_LABEL = "com.x-engage.autopilot"
 AUTOPILOT_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{AUTOPILOT_LABEL}.plist"
 AUTOPILOT_CONFIG = Path.home() / ".x-engage" / "autopilot.json"
 AUTOPILOT_HEARTBEAT = Path.home() / ".x-engage" / "autopilot-heartbeat"
-CAFFEINATE_PID_FILE = Path.home() / ".x-engage" / "caffeinate.pid"
 
 
 def _tz_offset_seconds(tz_name: str) -> int:
@@ -721,7 +720,6 @@ def cmd_autopilot_start(args: list[str]) -> int:
 
     target = target_default
     until = until_default
-    keep_awake = False
     for a in args:
         if a.startswith("target="):
             try:
@@ -730,8 +728,6 @@ def cmd_autopilot_start(args: list[str]) -> int:
                 pass
         elif a.startswith("until="):
             until = a.split("=", 1)[1].strip()
-        elif a in ("--keep-awake", "keep-awake", "--no-sleep"):
-            keep_awake = True
 
     panic_max = config.PANIC["autopilot_daily_cap_max"]
     target = config.safe_int(target, target_default, lower=1, upper=panic_max)
@@ -840,73 +836,17 @@ def cmd_autopilot_start(args: list[str]) -> int:
     else:
         print("autopilot start: scan-bg already running ✓")
 
-    # Optional: prevent system sleep for the rest of the day via `caffeinate`.
-    # macOS suspends LaunchAgents during sleep — caffeinate -i keeps the
-    # system awake (display can still dim/sleep, just not the system).
-    if keep_awake:
-        _start_caffeinate(until, settings.get("tz", "UTC"))
-
     print(f"autopilot: STARTED — target={target} replies, stops at {until} local ({settings.get('tz', 'UTC')})")
     print(f"  Tick interval: {tick_interval}s. Logs: {project_root}/logs/autopilot.{{out,err}}")
     print(f"  Hardened: KeepAlive+ThrottleInterval+ProcessType=Background (auto-restarts on crash)")
-    if keep_awake:
-        print(f"  System sleep: PREVENTED via caffeinate until {until} (pid in {CAFFEINATE_PID_FILE})")
-    else:
-        print(f"  System sleep: NOT prevented. If you close the lid, ticks pause. Use --keep-awake to override.")
+    print("  System sleep: not prevented. If the system sleeps or the lid closes, ticks pause.")
     print(f"  Stop with: /x-engage autopilot stop")
     return 0
 
 
-def _start_caffeinate(until: str, tz_name: str) -> None:
-    """Launch `caffeinate -i` (prevent idle sleep) until the stop time. Stores
-    pid so cmd_autopilot_stop can clean it up.
-    """
-    import subprocess, shutil
-    from datetime import datetime, timedelta
-    if not shutil.which("caffeinate"):
-        print("  WARN: caffeinate not found — install Xcode CLI tools to enable --keep-awake")
-        return
-    # Compute seconds until `until` time. If past today, schedule until same time tomorrow.
-    try:
-        hh, mm = _parse_hhmm(until)
-    except (ValueError, IndexError):
-        return
-    now = _autopilot_now_local(tz_name)
-    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    if target <= now:
-        target = target + timedelta(days=1)
-    seconds = int((target - now).total_seconds())
-    # Kill any previous caffeinate before starting a new one
-    _stop_caffeinate()
-    proc = subprocess.Popen(
-        ["caffeinate", "-i", "-t", str(seconds)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    CAFFEINATE_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CAFFEINATE_PID_FILE.write_text(str(proc.pid))
-
-
-def _stop_caffeinate() -> None:
-    """Kill the caffeinate process started by --keep-awake, if any."""
-    import os, signal
-    if not CAFFEINATE_PID_FILE.exists():
-        return
-    try:
-        pid = int(CAFFEINATE_PID_FILE.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-    except (ValueError, ProcessLookupError, PermissionError):
-        pass
-    try:
-        CAFFEINATE_PID_FILE.unlink()
-    except OSError:
-        pass
-
-
 def cmd_autopilot_stop() -> int:
-    """Unload the autopilot plist + kill caffeinate if active. Pool + drafts stay."""
+    """Unload the autopilot plist. Pool + drafts stay."""
     import subprocess
-    _stop_caffeinate()
     if not AUTOPILOT_PLIST.exists():
         print("autopilot stop: not installed (no plist found)")
         return 0
@@ -1212,12 +1152,6 @@ def cmd_status() -> int:
                 print(f"                heartbeat: unreadable")
         else:
             print(f"                heartbeat: never (daemon hasn't ticked yet)")
-        # Caffeinate state — is system-sleep prevention active?
-        if CAFFEINATE_PID_FILE.exists():
-            import subprocess as _sp
-            pid = CAFFEINATE_PID_FILE.read_text().strip()
-            alive = _sp.run(["kill", "-0", pid], capture_output=True).returncode == 0
-            print(f"                sleep-block: {'ACTIVE (caffeinate pid=' + pid + ')' if alive else 'stale pid file'}")
     print("─" * 50)
     return 0
 
