@@ -201,7 +201,8 @@ Autopilot fuses scan → draft → lint → publish into a single loop that runs
 ```bash
 /x-engage autopilot start                            # uses defaults from settings.yml (or CLI)
 /x-engage autopilot start target=25 until=18:00      # pass values inline
-/x-engage autopilot stop                             # unload daemon
+/x-engage autopilot start --keep-awake               # block idle sleep, only while autopilot is ticking
+/x-engage autopilot stop                             # unload daemon + drop the sleep block
 /x-engage autopilot list                             # today's published replies (audit)
 /x-engage status                                     # unified — includes autopilot heartbeat + sleep-block
 ```
@@ -230,7 +231,7 @@ Autopilot fuses scan → draft → lint → publish into a single loop that runs
 | Process crash | launchd auto-restarts (`KeepAlive` + `ThrottleInterval=30`) |
 | Machine reboot | Plist auto-loads on next login via `~/Library/LaunchAgents/` |
 | Network blip | Tick logs error, next tick retries in 60s |
-| System sleep / lid close | launchd PAUSES — ticks resume on wake, keep the lid open for a full run |
+| System sleep / lid close | launchd PAUSES — use `--keep-awake` for a per-tick sleep-block lease |
 | X cookie expiry | Writes PAUSED, self-unloads — refresh cookies, delete PAUSED, restart |
 | X safety signal | Writes PAUSED, screenshot saved, self-unloads |
 | New day | Yesterday's daemon self-stopped at `stop_at`. Re-run `autopilot start` manually (intentional gate) |

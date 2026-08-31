@@ -117,7 +117,7 @@ Both daemons run via macOS launchd plists in `~/Library/LaunchAgents/`:
 - `com.x-engage.scan-bg` — pool feeder, fires every 10 min. No drafts, no publishes.
 - `com.x-engage.autopilot` — autonomous tick every 60s. Drafts, lints, publishes. **Self-unloads** on target hit, `stop_at` time, PAUSED flag, or safety signal.
 
-launchd **pauses on system sleep / lid close.** Lost ticks are not backfilled. Keep the lid open for a full day's run.
+launchd **pauses on system sleep / lid close.** Lost ticks are not backfilled. The `--keep-awake` flag on `autopilot start` blocks idle sleep with a short `caffeinate -i` lease that every tick renews, so the block lives exactly as long as autopilot ticks and expires on its own if the daemon stops.
 
 Each new day, autopilot must be re-started manually. This is intentional — it forces a calibration gate.
 

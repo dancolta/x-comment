@@ -639,6 +639,7 @@ AUTOPILOT_LABEL = "com.x-engage.autopilot"
 AUTOPILOT_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{AUTOPILOT_LABEL}.plist"
 AUTOPILOT_CONFIG = Path.home() / ".x-engage" / "autopilot.json"
 AUTOPILOT_HEARTBEAT = Path.home() / ".x-engage" / "autopilot-heartbeat"
+CAFFEINATE_PID_FILE = Path.home() / ".x-engage" / "caffeinate.pid"
 
 
 def _tz_offset_seconds(tz_name: str) -> int:
@@ -720,6 +721,7 @@ def cmd_autopilot_start(args: list[str]) -> int:
 
     target = target_default
     until = until_default
+    keep_awake = False
     for a in args:
         if a.startswith("target="):
             try:
@@ -728,6 +730,8 @@ def cmd_autopilot_start(args: list[str]) -> int:
                 pass
         elif a.startswith("until="):
             until = a.split("=", 1)[1].strip()
+        elif a in ("--keep-awake", "keep-awake", "--no-sleep"):
+            keep_awake = True
 
     panic_max = config.PANIC["autopilot_daily_cap_max"]
     target = config.safe_int(target, target_default, lower=1, upper=panic_max)
@@ -745,6 +749,7 @@ def cmd_autopilot_start(args: list[str]) -> int:
     _save_autopilot_runtime({
         "target": target,
         "until": until,
+        "keep_awake": keep_awake,
         "started_at": state.now(),
     })
 
@@ -839,14 +844,74 @@ def cmd_autopilot_start(args: list[str]) -> int:
     print(f"autopilot: STARTED — target={target} replies, stops at {until} local ({settings.get('tz', 'UTC')})")
     print(f"  Tick interval: {tick_interval}s. Logs: {project_root}/logs/autopilot.{{out,err}}")
     print(f"  Hardened: KeepAlive+ThrottleInterval+ProcessType=Background (auto-restarts on crash)")
-    print("  System sleep: not prevented. If the system sleeps or the lid closes, ticks pause.")
+    if keep_awake:
+        _refresh_caffeinate(_caffeinate_lease_sec(tick_interval))
+        print(f"  System sleep: prevented while autopilot ticks (caffeinate lease refreshed each tick,")
+        print(f"                expires ~{_caffeinate_lease_sec(tick_interval)}s after the last tick or on `autopilot stop`)")
+    else:
+        print("  System sleep: not prevented. If the system sleeps or the lid closes, ticks pause.")
     print(f"  Stop with: /x-engage autopilot stop")
     return 0
 
 
+def _caffeinate_lease_sec(tick_interval: int) -> int:
+    """Sleep-block lease: long enough to bridge a few ticks, short enough that
+    the assertion dies on its own if the daemon stops ticking."""
+    return max(150, int(tick_interval) * 3)
+
+
+def _refresh_caffeinate(seconds: int) -> None:
+    """(Re)take a short `caffeinate -i` lease that outlives only the next few
+    ticks. Called on start and on every tick, so the block exists exactly as
+    long as autopilot is actually running — a crash or unload lets the system
+    sleep again once the lease expires.
+    """
+    import subprocess, shutil
+    if not shutil.which("caffeinate"):
+        return
+    old_pid = None
+    if CAFFEINATE_PID_FILE.exists():
+        try:
+            old_pid = int(CAFFEINATE_PID_FILE.read_text().strip())
+        except (ValueError, OSError):
+            pass
+    proc = subprocess.Popen(
+        ["caffeinate", "-i", "-t", str(int(seconds))],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    CAFFEINATE_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CAFFEINATE_PID_FILE.write_text(str(proc.pid))
+    if old_pid:
+        _kill_pid(old_pid)
+
+
+def _kill_pid(pid: int) -> None:
+    import os, signal
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _stop_caffeinate() -> None:
+    """Drop the sleep block immediately."""
+    if not CAFFEINATE_PID_FILE.exists():
+        return
+    try:
+        _kill_pid(int(CAFFEINATE_PID_FILE.read_text().strip()))
+    except (ValueError, OSError):
+        pass
+    try:
+        CAFFEINATE_PID_FILE.unlink()
+    except OSError:
+        pass
+
+
 def cmd_autopilot_stop() -> int:
-    """Unload the autopilot plist. Pool + drafts stay."""
+    """Unload the autopilot plist + drop the sleep block. Pool + drafts stay."""
     import subprocess
+    _stop_caffeinate()
     if not AUTOPILOT_PLIST.exists():
         print("autopilot stop: not installed (no plist found)")
         return 0
@@ -953,6 +1018,11 @@ def cmd_autopilot_tick() -> int:
         50, lower=1, upper=config.PANIC["autopilot_daily_cap_max"],
     )
     until = str(runtime.get("until", ap_settings.get("stop_at", "18:00")))
+    if runtime.get("keep_awake"):
+        _refresh_caffeinate(_caffeinate_lease_sec(config.safe_int(
+            ap_settings.get("tick_interval_sec", 60), 60,
+            lower=config.PANIC["min_gap_sec_floor"], upper=600,
+        )))
     max_age = config.safe_int(ap_settings.get("candidate_max_age_min", 30), 30, 5, 240)
     min_gap = config.safe_int(
         ap_settings.get("min_gap_between_publishes_sec", 90), 90,
@@ -1152,6 +1222,11 @@ def cmd_status() -> int:
                 print(f"                heartbeat: unreadable")
         else:
             print(f"                heartbeat: never (daemon hasn't ticked yet)")
+        if CAFFEINATE_PID_FILE.exists():
+            import subprocess as _sp
+            pid = CAFFEINATE_PID_FILE.read_text().strip()
+            alive = _sp.run(["kill", "-0", pid], capture_output=True).returncode == 0
+            print(f"                sleep-block: {'ACTIVE (caffeinate pid=' + pid + ')' if alive else 'lease expired'}")
     print("─" * 50)
     return 0
 
